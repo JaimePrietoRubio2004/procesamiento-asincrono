@@ -3,6 +3,7 @@ package dev.jaimeprieto.procesamientoasincrono.servicios;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -19,10 +20,21 @@ import dev.jaimeprieto.procesamientoasincrono.repositorios.RepositorioTarea;
 @Service
 public class TareaServicio {
 
+	private static final String TAREAS_INTERCAMBIO = "tareas.exchange";
+
+	private static final String TAREAS_BAJA = "tareas.baja";
+
+	private static final String TAREAS_MEDIA = "tareas.media";
+
+	private static final String TAREAS_ALTA = "tareas.alta";
+
 	private final RepositorioTarea repositorioTarea;
 
-	public TareaServicio(RepositorioTarea repositoriotarea) {
+	private final RabbitTemplate rabbitTemplate;
+
+	public TareaServicio(RepositorioTarea repositoriotarea, RabbitTemplate rabbitTemplate) {
 		this.repositorioTarea = repositoriotarea;
+		this.rabbitTemplate = rabbitTemplate;
 	}
 
 	public ResponseEntity<Object> crearTarea(TareaDto tareaDto) {
@@ -38,11 +50,30 @@ public class TareaServicio {
 		Tarea tarea = new Tarea();
 		nuevaTarea(tareaDto, tarea);
 		Tarea tareaGuardada = repositorioTarea.save(tarea);
+		tareaGuardada = publicarMensajeYCambioEstado(tareaGuardada);
 		TareaDto nuevaTareaDto = new TareaDto();
 		nuevaTareaDto.setIdTarea(tareaGuardada.getId());
 		nuevaTareaDto.setEstado(tareaGuardada.getEstado());
 		nuevaTareaDto.setFechaCreacion(tareaGuardada.getFechaCreacion());
 		return ResponseEntity.status(HttpStatus.ACCEPTED).body(nuevaTareaDto);
+	}
+
+	private Tarea publicarMensajeYCambioEstado(Tarea tareaGuardada) {
+		if (tareaGuardada.getEstado().equals(EstadoTarea.PENDIENTE)) {
+			String routingKey = switch (tareaGuardada.getPrioridad()) {
+			case ALTA -> TAREAS_ALTA;
+			case MEDIA -> TAREAS_MEDIA;
+			case BAJA -> TAREAS_BAJA;
+			};
+			//publica un mensaje en RabbitMQ (internamente convierte un string en un mensaje de AMQP: 
+			//1º parametro --> A cual intercambio pertenece
+			//2º parametro --> Con que etiqueta se manda
+			//3º parametro --> El contenido
+			rabbitTemplate.convertAndSend(TAREAS_INTERCAMBIO, routingKey, tareaGuardada.getId().toString());
+			tareaGuardada.setEstado(EstadoTarea.ENCOLADA);
+			tareaGuardada = repositorioTarea.save(tareaGuardada);
+		}
+		return tareaGuardada;
 	}
 
 	private void nuevaTarea(TareaDto tareaDto, Tarea tarea) {

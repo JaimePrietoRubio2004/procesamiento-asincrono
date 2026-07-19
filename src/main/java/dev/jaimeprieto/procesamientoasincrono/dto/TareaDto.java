@@ -143,26 +143,6 @@ public class TareaDto {
 		this.fechaFinalizacion = fechaFinalizacion;
 	}
 
-	public TareaDto(UUID idTarea, String tipo, Map<String, Object> payload, EstadoTarea estado, PrioridadTarea prioridad,
-			int contadorReintentos, Integer maxReintentos, LocalDateTime fechaProgramada, String expresionCron,
-			String mensajeError, LocalDateTime fechaCreacion, LocalDateTime fechaActualizacion,
-			LocalDateTime fechaFinalizacion) {
-		super();
-		this.idTarea = idTarea;
-		this.tipo = tipo;
-		this.payload = payload;
-		this.estado = estado;
-		this.prioridad = prioridad;
-		this.contadorReintentos = contadorReintentos;
-		this.maxReintentos = maxReintentos;
-		this.fechaProgramada = fechaProgramada;
-		this.expresionCron = expresionCron;
-		this.mensajeError = mensajeError;
-		this.fechaCreacion = fechaCreacion;
-		this.fechaActualizacion = fechaActualizacion;
-		this.fechaFinalizacion = fechaFinalizacion;
-	}
-
 	public TareaDto() {
 		super();
 	}
