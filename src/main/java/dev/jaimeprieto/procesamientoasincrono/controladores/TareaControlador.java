@@ -4,11 +4,9 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -81,6 +79,43 @@ public class TareaControlador {
 			log.error("Error al cancelar la tarea", e);
 			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
 					.body("Error inesperado al cancelar la tarea");
+		}
+	}
+
+	@PostMapping("/tareas/{idTarea}/reintentar")
+	public ResponseEntity<Object> reintentoManual(@PathVariable UUID idTarea) {
+		try {
+			return servicio.reintentoManual(idTarea);
+		} catch (TareaNoEncontradaException e) {
+			return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+		} catch (Exception e) {
+			log.error("Error en el reintentado manual", e);
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+					.body("Error inesperado en el reintentado manual");
+		}
+	}
+
+	@GetMapping("/admin/dlq")
+	public ResponseEntity<Object> inspeccionarMensajesDlq(Pageable pageable){
+		try {
+			return servicio.inspeccionMensajeDlq(pageable);
+		} catch (Exception e) {
+			log.error("Error al inspeccionar mensajes DLQ", e);
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+					.body("Error inesperado al inspeccionar mensajes DLQ");
+		}
+	}
+
+	@PostMapping("/admin/dlq/{idTarea}/reproducir")
+	public ResponseEntity<Object> reinyeccionManual(@PathVariable UUID idTarea) {
+		try {
+			return servicio.reinyeccionManual(idTarea);
+		} catch (TareaNoEncontradaException e) {
+			return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+		} catch (Exception e) {
+			log.error("Error en la reinyeccion manual", e);
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+					.body("Error inesperado en la reinyeccion manual");
 		}
 	}
 }

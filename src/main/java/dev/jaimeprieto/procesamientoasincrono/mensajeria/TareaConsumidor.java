@@ -2,12 +2,19 @@ package dev.jaimeprieto.procesamientoasincrono.mensajeria;
 
 import java.util.UUID;
 
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
+import dev.jaimeprieto.procesamientoasincrono.excepciones.ExcepcionReintentable;
+import dev.jaimeprieto.procesamientoasincrono.manejadores.ManejadorTarea;
+import dev.jaimeprieto.procesamientoasincrono.manejadores.RegistroManejadores;
 import dev.jaimeprieto.procesamientoasincrono.modelos.EstadoTarea;
 import dev.jaimeprieto.procesamientoasincrono.modelos.Tarea;
 import dev.jaimeprieto.procesamientoasincrono.repositorios.RepositorioTarea;
+import io.github.resilience4j.core.IntervalFunction;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryConfig;
 
 @Component
 public class TareaConsumidor {
@@ -26,10 +33,13 @@ public class TareaConsumidor {
 
 	private final RepositorioTarea repositorioTarea;
 
-	public TareaConsumidor(RepositorioTarea repositorioTarea) {
+	private final RegistroManejadores registroManejadores;
+
+	public TareaConsumidor(RepositorioTarea repositorioTarea, RegistroManejadores registroManejadores) {
 		this.repositorioTarea = repositorioTarea;
+		this.registroManejadores = registroManejadores;
 	}
-	
+
 	// Consume mensajes de la cola de prioridad alta (prefetch alto)
 	@RabbitListener(queues = TAREAS_ALTA, containerFactory = FACTORIA_ALTA)
 	public void procesarTareaAlta(String idTarea) {
@@ -48,13 +58,39 @@ public class TareaConsumidor {
 		procesarTarea(idTarea);
 	}
 
-	// Busca la tarea por id y orquesta su procesamiento: inicia y completa
+	// Busca la tarea, la marca PROCESANDO, ejecuta su manejador con reintentos y
+	// backoff exponencial
+	// (según maxReintentos de la tarea); si agota los intentos o el fallo no es
+	// reintentable,
+	// marca la tarea FALLIDA y rechaza el mensaje sin reencolar (cae al DLQ); si
+	// todo va bien, la marca COMPLETADA
 	public void procesarTarea(String idTarea) {
-		UUID id = UUID.fromString(idTarea);
-		Tarea tarea = repositorioTarea.findById(id).orElseThrow();
-		iniciarProcesamiento(tarea);
-		// Logica del dia 4
-		completarTarea(tarea);
+		try {
+			String idLimpio = idTarea.replaceAll("^\"|\"$", "");
+			UUID id = UUID.fromString(idLimpio);
+			Tarea tarea = repositorioTarea.findById(id).orElseThrow();
+			iniciarProcesamiento(tarea);
+
+			ManejadorTarea manejador = registroManejadores.obtener(tarea.getTipo());
+
+			RetryConfig config = RetryConfig.custom().maxAttempts(tarea.getMaxReintentos())
+					.intervalFunction(IntervalFunction.ofExponentialBackoff(2000, 2))
+					.retryExceptions(ExcepcionReintentable.class).build();
+			Retry retry = Retry.of("tarea-" + tarea.getId(), config);
+			try {
+				retry.executeRunnable(() -> manejador.manejar(tarea));
+			} catch (Exception e) {
+				tarea.setEstado(EstadoTarea.FALLIDA);
+				tarea.setMensajeError(e.getMessage());
+				repositorioTarea.save(tarea);
+				throw new AmqpRejectAndDontRequeueException("Tarea fallida definitivamente: " + idTarea, e);
+			}
+			completarTarea(tarea);
+		} catch (AmqpRejectAndDontRequeueException e) {
+			throw e;
+		} catch (Exception e) {
+			throw new AmqpRejectAndDontRequeueException("Error inesperado procesando mensaje: " + idTarea, e);
+		}
 	}
 
 	// Marca la tarea como PROCESANDO y guarda el cambio

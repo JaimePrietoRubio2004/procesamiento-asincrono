@@ -20,7 +20,7 @@ import dev.jaimeprieto.procesamientoasincrono.repositorios.RepositorioTarea;
 @Service
 public class TareaServicio {
 
-	private static final String TAREAS_INTERCAMBIO = "tareas.exchange";
+	private static final String TAREAS_INTERCAMBIO = "tareas.intercambio";
 
 	private static final String TAREAS_BAJA = "tareas.baja";
 
@@ -65,10 +65,11 @@ public class TareaServicio {
 			case MEDIA -> TAREAS_MEDIA;
 			case BAJA -> TAREAS_BAJA;
 			};
-			//publica un mensaje en RabbitMQ (internamente convierte un string en un mensaje de AMQP: 
-			//1º parametro --> A cual intercambio pertenece
-			//2º parametro --> Con que etiqueta se manda
-			//3º parametro --> El contenido
+			// publica un mensaje en RabbitMQ (internamente convierte un string en un
+			// mensaje de AMQP:
+			// 1º parametro --> A cual intercambio pertenece
+			// 2º parametro --> Con que etiqueta se manda
+			// 3º parametro --> El contenido
 			rabbitTemplate.convertAndSend(TAREAS_INTERCAMBIO, routingKey, tareaGuardada.getId().toString());
 			tareaGuardada.setEstado(EstadoTarea.ENCOLADA);
 			tareaGuardada = repositorioTarea.save(tareaGuardada);
@@ -141,6 +142,37 @@ public class TareaServicio {
 			EstadoTarea estado = tarea.getEstado();
 			return ResponseEntity.status(HttpStatus.CONFLICT).body("La tarea esta en estado: " + estado);
 		}
+	}
+
+	public ResponseEntity<Object> reintentoManual(UUID idTarea) {
+		return reprocesarTareaFallida(idTarea);
+	}
+
+	private ResponseEntity<Object> reprocesarTareaFallida(UUID idTarea) {
+		if (idTarea == null) {
+			return ResponseEntity.badRequest().build();
+		}
+		Tarea tarea = repositorioTarea.findById(idTarea).orElseThrow(() -> new TareaNoEncontradaException(idTarea));
+		if (tarea.getEstado() != EstadoTarea.FALLIDA) {
+			EstadoTarea estado = tarea.getEstado();
+			return ResponseEntity.status(HttpStatus.CONFLICT).body("La tarea esta en estado: " + estado);
+		}
+		tarea.setContadorReintentos(0);
+		tarea.setMensajeError(null);
+		tarea.setEstado(EstadoTarea.PENDIENTE);
+		tarea = repositorioTarea.save(tarea);
+		tarea = publicarMensajeYCambioEstado(tarea);
+		return ResponseEntity.accepted().build();
+	}
+
+	public ResponseEntity<Object> reinyeccionManual(UUID idTarea) {
+		return reprocesarTareaFallida(idTarea);
+	}
+
+	public ResponseEntity<Object> inspeccionMensajeDlq(Pageable pageable) {
+		Page<Tarea> tareasFallidas = repositorioTarea.findByEstado(EstadoTarea.FALLIDA, pageable);
+		Page<TareaDto> dtoTareasFallidas = tareasFallidas.map(this::convertirADto);
+		return ResponseEntity.ok(dtoTareasFallidas);
 	}
 
 }
