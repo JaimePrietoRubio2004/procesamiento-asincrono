@@ -64,6 +64,9 @@ public class Tarea {
 
 	@Column(name = "fecha_finalizacion", nullable = true)
 	private LocalDateTime fechaFinalizacion;
+	
+	@Column (name = "fecha_proxima_ejecucion", nullable = true)
+	private LocalDateTime fechaProximaEjecucion;
 
 	public UUID getId() {
 		return id;
@@ -72,7 +75,7 @@ public class Tarea {
 	public Tarea(UUID id, String tipo, Map<String, Object> payload, EstadoTarea estado, PrioridadTarea prioridad,
 			int contadorReintentos, int maxReintentos, LocalDateTime fechaProgramada, String expresionCron,
 			String mensajeError, LocalDateTime fechaCreacion, LocalDateTime fechaActualizacion,
-			LocalDateTime fechaFinalizacion) {
+			LocalDateTime fechaFinalizacion, LocalDateTime fechaProximaEjecucion) {
 		super();
 		this.id = id;
 		this.tipo = tipo;
@@ -87,6 +90,7 @@ public class Tarea {
 		this.fechaCreacion = fechaCreacion;
 		this.fechaActualizacion = fechaActualizacion;
 		this.fechaFinalizacion = fechaFinalizacion;
+		this.fechaProximaEjecucion = fechaProximaEjecucion;
 	}
 
 	public void setId(UUID id) {
@@ -187,6 +191,14 @@ public class Tarea {
 
 	public void setFechaFinalizacion(LocalDateTime fechaFinalizacion) {
 		this.fechaFinalizacion = fechaFinalizacion;
+	}
+	
+	public LocalDateTime getFechaProximaEjecucion() {
+		return fechaProximaEjecucion;
+	}
+
+	public void setFechaProximaEjecucion(LocalDateTime fechaProximaEjecucion) {
+		this.fechaProximaEjecucion = fechaProximaEjecucion;
 	}
 
 	public Tarea() {

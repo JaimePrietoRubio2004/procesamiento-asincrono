@@ -1,9 +1,11 @@
 package dev.jaimeprieto.procesamientoasincrono.mensajeria;
 
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Component;
 
 import dev.jaimeprieto.procesamientoasincrono.excepciones.ExcepcionReintentable;
@@ -99,9 +101,21 @@ public class TareaConsumidor {
 		repositorioTarea.save(tarea);
 	}
 
-	// Marca la tarea como COMPLETADA y guarda el cambio
+	/**
+	 * Si la tarea es recurrente (expresionCron), recalcula la próxima ejecución y
+	 * la vuelve a dejar en PROGRAMADA; si no, la marca como COMPLETADA.
+	 */
 	private void completarTarea(Tarea tarea) {
-		tarea.setEstado(EstadoTarea.COMPLETADA);
+		if (tarea.getExpresionCron() != null) {
+			CronExpression cron = CronExpression.parse(tarea.getExpresionCron());
+			LocalDateTime siguiente = cron.next(tarea.getFechaProximaEjecucion());
+			tarea.setContadorReintentos(0);
+			tarea.setFechaProximaEjecucion(siguiente);
+			tarea.setEstado(EstadoTarea.PROGRAMADA);
+		} else {
+			tarea.setEstado(EstadoTarea.COMPLETADA);
+			tarea.setFechaFinalizacion(LocalDateTime.now());
+		}
 		repositorioTarea.save(tarea);
 	}
 }

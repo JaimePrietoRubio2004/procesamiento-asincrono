@@ -1,13 +1,17 @@
 package dev.jaimeprieto.procesamientoasincrono.servicios;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 
 import dev.jaimeprieto.procesamientoasincrono.dto.TareaDto;
@@ -19,6 +23,8 @@ import dev.jaimeprieto.procesamientoasincrono.repositorios.RepositorioTarea;
 
 @Service
 public class TareaServicio {
+
+	private static final Logger log = LoggerFactory.getLogger(TareaServicio.class);
 
 	private static final String TAREAS_INTERCAMBIO = "tareas.intercambio";
 
@@ -82,14 +88,21 @@ public class TareaServicio {
 		tarea.setPayload(tareaDto.getPayload());
 		tarea.setPrioridad(tareaDto.getPrioridad());
 		tarea.setContadorReintentos(0);
+		tarea.setExpresionCron(tareaDto.getExpresionCron());
 		tarea.setMaxReintentos(tareaDto.getMaxReintentos());
 		tarea.setFechaProgramada(tareaDto.getFechaProgramada());
 		tarea.setFechaCreacion(LocalDateTime.now());
 		tarea.setFechaActualizacion(LocalDateTime.now());
-		tarea.setEstado(
-				tareaDto.getFechaProgramada() != null && tareaDto.getFechaProgramada().isAfter(LocalDateTime.now())
-						? EstadoTarea.PROGRAMADA
-						: EstadoTarea.PENDIENTE);
+		if (tareaDto.getExpresionCron() != null) {
+			tarea.setEstado(EstadoTarea.PROGRAMADA);
+			CronExpression cron = CronExpression.parse(tareaDto.getExpresionCron());
+			tarea.setFechaProximaEjecucion(cron.next(LocalDateTime.now()));
+		} else if (tareaDto.getFechaProgramada() != null
+				&& tareaDto.getFechaProgramada().isAfter(LocalDateTime.now())) {
+			tarea.setEstado(EstadoTarea.PROGRAMADA);
+		} else {
+			tarea.setEstado(EstadoTarea.PENDIENTE);
+		}
 	}
 
 	public ResponseEntity<Object> consultarEstado(UUID idTarea) {
@@ -173,6 +186,31 @@ public class TareaServicio {
 		Page<Tarea> tareasFallidas = repositorioTarea.findByEstado(EstadoTarea.FALLIDA, pageable);
 		Page<TareaDto> dtoTareasFallidas = tareasFallidas.map(this::convertirADto);
 		return ResponseEntity.ok(dtoTareasFallidas);
+	}
+
+	/**
+	 * Busca tareas en estado PROGRAMADA cuya fechaProgramada ya se ha cumplido y
+	 * las encola (mismo camino que crearTarea: PENDIENTE -> publicar -> ENCOLADA).
+	 */
+	public void encolarTareasProgramadasVencidas() {
+		List<Tarea> tareasProgramadas = repositorioTarea.findByEstadoAndFechaProgramadaBefore(EstadoTarea.PROGRAMADA,
+				LocalDateTime.now());
+		for (Tarea tarea : tareasProgramadas) {
+			actualizarEstadoYPublicarMensaje(tarea);
+		}
+		List<Tarea> tareasRecurrentes = repositorioTarea
+				.findByExpresionCronIsNotNullAndFechaProximaEjecucionBefore(LocalDateTime.now());
+		for (Tarea tarea : tareasRecurrentes) {
+			actualizarEstadoYPublicarMensaje(tarea);
+		}
+		log.info("Barrido de tareas programadas ({}): {} normales, {} recurrentes encoladas", LocalDateTime.now(),
+				tareasProgramadas.size(), tareasRecurrentes.size());
+	}
+
+	private void actualizarEstadoYPublicarMensaje(Tarea tarea) {
+		tarea.setEstado(EstadoTarea.PENDIENTE);
+		Tarea guardada = repositorioTarea.save(tarea);
+		publicarMensajeYCambioEstado(guardada);
 	}
 
 }

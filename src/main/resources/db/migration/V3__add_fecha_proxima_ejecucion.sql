@@ -1,0 +1,1 @@
+ALTER TABLE tarea ADD COLUMN fecha_proxima_ejecucion TIMESTAMP;

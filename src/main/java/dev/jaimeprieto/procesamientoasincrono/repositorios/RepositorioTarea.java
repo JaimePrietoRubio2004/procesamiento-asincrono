@@ -1,5 +1,7 @@
 package dev.jaimeprieto.procesamientoasincrono.repositorios;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import org.springframework.data.domain.Page;
@@ -12,8 +14,12 @@ import dev.jaimeprieto.procesamientoasincrono.modelos.Tarea;
 public interface RepositorioTarea extends JpaRepository<Tarea, UUID> {
 
 	Page<Tarea> findByEstado(EstadoTarea estado, Pageable pageable);
-	
+
 	Page<Tarea> findByTipo(String tipo, Pageable pageable);
-	
+
 	Page<Tarea> findByEstadoAndTipo(EstadoTarea estado, String tipo, Pageable pageable);
+
+	List<Tarea> findByEstadoAndFechaProgramadaBefore(EstadoTarea estado, LocalDateTime fechaProgramada);
+	
+	List<Tarea> findByExpresionCronIsNotNullAndFechaProximaEjecucionBefore(LocalDateTime fecha);
 }
