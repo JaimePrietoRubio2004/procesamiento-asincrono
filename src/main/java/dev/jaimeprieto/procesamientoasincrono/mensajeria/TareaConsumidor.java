@@ -3,6 +3,7 @@ package dev.jaimeprieto.procesamientoasincrono.mensajeria;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import org.jboss.logging.MDC;
 import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.scheduling.support.CronExpression;
@@ -17,9 +18,23 @@ import dev.jaimeprieto.procesamientoasincrono.repositorios.RepositorioTarea;
 import io.github.resilience4j.core.IntervalFunction;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 
 @Component
 public class TareaConsumidor {
+
+	private static final String ID_TAREA = "idTarea";
+
+	private static final String TIPO = "tipo";
+
+	private static final String TAREAS_TIEMPO_PROCESAMIENTO = "tareas.tiempo.procesamiento";
+
+	private static final String TAREAS_REINTENTADAS = "tareas.reintentadas";
+
+	private static final String TAREAS_FALLIDAS = "tareas.fallidas";
+
+	private static final String TAREAS_COMPLETADAS = "tareas.completadas";
 
 	private static final String FACTORIA_BAJA = "bajaFactoria";
 
@@ -37,9 +52,13 @@ public class TareaConsumidor {
 
 	private final RegistroManejadores registroManejadores;
 
-	public TareaConsumidor(RepositorioTarea repositorioTarea, RegistroManejadores registroManejadores) {
+	private final MeterRegistry meterRegistry;
+
+	public TareaConsumidor(RepositorioTarea repositorioTarea, RegistroManejadores registroManejadores,
+			MeterRegistry meterRegistry) {
 		this.repositorioTarea = repositorioTarea;
 		this.registroManejadores = registroManejadores;
+		this.meterRegistry = meterRegistry;
 	}
 
 	// Consume mensajes de la cola de prioridad alta (prefetch alto)
@@ -68,6 +87,7 @@ public class TareaConsumidor {
 	// todo va bien, la marca COMPLETADA
 	public void procesarTarea(String idTarea) {
 		try {
+			MDC.put(ID_TAREA, idTarea);
 			String idLimpio = idTarea.replaceAll("^\"|\"$", "");
 			UUID id = UUID.fromString(idLimpio);
 			Tarea tarea = repositorioTarea.findById(id).orElseThrow();
@@ -79,13 +99,20 @@ public class TareaConsumidor {
 					.intervalFunction(IntervalFunction.ofExponentialBackoff(2000, 2))
 					.retryExceptions(ExcepcionReintentable.class).build();
 			Retry retry = Retry.of("tarea-" + tarea.getId(), config);
+			retry.getEventPublisher().onRetry(evento -> meterRegistry.counter(TAREAS_REINTENTADAS).increment());
+			Timer.Sample muestra = Timer.start(meterRegistry);
 			try {
 				retry.executeRunnable(() -> manejador.manejar(tarea));
 			} catch (Exception e) {
 				tarea.setEstado(EstadoTarea.FALLIDA);
 				tarea.setMensajeError(e.getMessage());
 				repositorioTarea.save(tarea);
+				meterRegistry.counter(TAREAS_FALLIDAS).increment();
 				throw new AmqpRejectAndDontRequeueException("Tarea fallida definitivamente: " + idTarea, e);
+			} finally {
+				muestra.stop(
+						Timer.builder(TAREAS_TIEMPO_PROCESAMIENTO).tag(TIPO, tarea.getTipo()).register(meterRegistry));
+				MDC.remove(ID_TAREA);
 			}
 			completarTarea(tarea);
 		} catch (AmqpRejectAndDontRequeueException e) {
@@ -115,6 +142,7 @@ public class TareaConsumidor {
 		} else {
 			tarea.setEstado(EstadoTarea.COMPLETADA);
 			tarea.setFechaFinalizacion(LocalDateTime.now());
+			meterRegistry.counter(TAREAS_COMPLETADAS).increment();
 		}
 		repositorioTarea.save(tarea);
 	}

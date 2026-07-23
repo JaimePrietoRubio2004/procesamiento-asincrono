@@ -20,12 +20,15 @@ import dev.jaimeprieto.procesamientoasincrono.modelos.EstadoTarea;
 import dev.jaimeprieto.procesamientoasincrono.modelos.PrioridadTarea;
 import dev.jaimeprieto.procesamientoasincrono.modelos.Tarea;
 import dev.jaimeprieto.procesamientoasincrono.repositorios.RepositorioTarea;
+import io.micrometer.core.instrument.MeterRegistry;
 
 @Service
 public class TareaServicio {
 
 	private static final Logger log = LoggerFactory.getLogger(TareaServicio.class);
 
+	private static final String TAREAS_CREADAS = "tareas.creadas";
+	
 	private static final String TAREAS_INTERCAMBIO = "tareas.intercambio";
 
 	private static final String TAREAS_BAJA = "tareas.baja";
@@ -37,10 +40,13 @@ public class TareaServicio {
 	private final RepositorioTarea repositorioTarea;
 
 	private final RabbitTemplate rabbitTemplate;
+	
+	private final MeterRegistry meterRegistry;
 
-	public TareaServicio(RepositorioTarea repositoriotarea, RabbitTemplate rabbitTemplate) {
+	public TareaServicio(RepositorioTarea repositoriotarea, RabbitTemplate rabbitTemplate, MeterRegistry meterRegistry) {
 		this.repositorioTarea = repositoriotarea;
 		this.rabbitTemplate = rabbitTemplate;
+		this.meterRegistry = meterRegistry;
 	}
 
 	public ResponseEntity<Object> crearTarea(TareaDto tareaDto) {
@@ -57,6 +63,7 @@ public class TareaServicio {
 		nuevaTarea(tareaDto, tarea);
 		Tarea tareaGuardada = repositorioTarea.save(tarea);
 		tareaGuardada = publicarMensajeYCambioEstado(tareaGuardada);
+		meterRegistry.counter(TAREAS_CREADAS).increment();
 		TareaDto nuevaTareaDto = new TareaDto();
 		nuevaTareaDto.setIdTarea(tareaGuardada.getId());
 		nuevaTareaDto.setEstado(tareaGuardada.getEstado());
