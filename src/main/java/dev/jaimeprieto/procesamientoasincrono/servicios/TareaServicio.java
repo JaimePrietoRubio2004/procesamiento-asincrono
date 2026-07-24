@@ -14,11 +14,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 
+import dev.jaimeprieto.procesamientoasincrono.dto.EjecucionTareaDto;
 import dev.jaimeprieto.procesamientoasincrono.dto.TareaDto;
 import dev.jaimeprieto.procesamientoasincrono.excepciones.TareaNoEncontradaException;
+import dev.jaimeprieto.procesamientoasincrono.modelos.EjecucionTarea;
 import dev.jaimeprieto.procesamientoasincrono.modelos.EstadoTarea;
 import dev.jaimeprieto.procesamientoasincrono.modelos.PrioridadTarea;
 import dev.jaimeprieto.procesamientoasincrono.modelos.Tarea;
+import dev.jaimeprieto.procesamientoasincrono.repositorios.RepositorioEjecucionTarea;
 import dev.jaimeprieto.procesamientoasincrono.repositorios.RepositorioTarea;
 import io.micrometer.core.instrument.MeterRegistry;
 
@@ -28,7 +31,7 @@ public class TareaServicio {
 	private static final Logger log = LoggerFactory.getLogger(TareaServicio.class);
 
 	private static final String TAREAS_CREADAS = "tareas.creadas";
-	
+
 	private static final String TAREAS_INTERCAMBIO = "tareas.intercambio";
 
 	private static final String TAREAS_BAJA = "tareas.baja";
@@ -40,13 +43,17 @@ public class TareaServicio {
 	private final RepositorioTarea repositorioTarea;
 
 	private final RabbitTemplate rabbitTemplate;
-	
+
 	private final MeterRegistry meterRegistry;
 
-	public TareaServicio(RepositorioTarea repositoriotarea, RabbitTemplate rabbitTemplate, MeterRegistry meterRegistry) {
+	private final RepositorioEjecucionTarea repositorioEjecucionTarea;
+
+	public TareaServicio(RepositorioTarea repositoriotarea, RabbitTemplate rabbitTemplate, MeterRegistry meterRegistry,
+			RepositorioEjecucionTarea repositorioEjecucionTarea) {
 		this.repositorioTarea = repositoriotarea;
 		this.rabbitTemplate = rabbitTemplate;
 		this.meterRegistry = meterRegistry;
+		this.repositorioEjecucionTarea = repositorioEjecucionTarea;
 	}
 
 	public ResponseEntity<Object> crearTarea(TareaDto tareaDto) {
@@ -220,4 +227,26 @@ public class TareaServicio {
 		publicarMensajeYCambioEstado(guardada);
 	}
 
+	public ResponseEntity<Object> consultarEjecucionTarea(UUID idTarea) {
+		if (idTarea == null) {
+			return ResponseEntity.badRequest().build();
+		}
+		if (!repositorioTarea.existsById(idTarea)) {
+			throw new TareaNoEncontradaException(idTarea);
+		}
+		List<EjecucionTarea> listaEjecucionTarea = repositorioEjecucionTarea
+				.findByTareaIdOrderByNumeroIntentoAsc(idTarea);
+		List<EjecucionTareaDto> listaDto = listaEjecucionTarea.stream().map(this::convertirAEjecucionDto).toList();
+		return ResponseEntity.ok(listaDto);
+	}
+
+	private EjecucionTareaDto convertirAEjecucionDto(EjecucionTarea ejecucion) {
+		EjecucionTareaDto dto = new EjecucionTareaDto();
+		dto.setNumeroIntento(ejecucion.getNumeroIntento());
+		dto.setEstado(ejecucion.getEstado());
+		dto.setMensajeError(ejecucion.getMensajeError());
+		dto.setFechaInicio(ejecucion.getFechaInicio());
+		dto.setFechaFin(ejecucion.getFechaFin());
+		return dto;
+	}
 }

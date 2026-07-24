@@ -96,7 +96,7 @@ public class TareaControlador {
 	}
 
 	@GetMapping("/admin/dlq")
-	public ResponseEntity<Object> inspeccionarMensajesDlq(Pageable pageable){
+	public ResponseEntity<Object> inspeccionarMensajesDlq(Pageable pageable) {
 		try {
 			return servicio.inspeccionMensajeDlq(pageable);
 		} catch (Exception e) {
@@ -116,6 +116,19 @@ public class TareaControlador {
 			log.error("Error en la reinyeccion manual", e);
 			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
 					.body("Error inesperado en la reinyeccion manual");
+		}
+	}
+
+	@GetMapping("/tareas/{idTarea}/ejecuciones")
+	public ResponseEntity<Object> consultarEjecucionTarea(@PathVariable UUID idTarea) {
+		try {
+			return servicio.consultarEjecucionTarea(idTarea);
+		} catch (TareaNoEncontradaException e) {
+			return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+		} catch (Exception e) {
+			log.error("Error al consultar ejecuciones de la tarea", e);
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+					.body("Error inesperado al consultar ejecuciones");
 		}
 	}
 }

@@ -12,8 +12,11 @@ import org.springframework.stereotype.Component;
 import dev.jaimeprieto.procesamientoasincrono.excepciones.ExcepcionReintentable;
 import dev.jaimeprieto.procesamientoasincrono.manejadores.ManejadorTarea;
 import dev.jaimeprieto.procesamientoasincrono.manejadores.RegistroManejadores;
+import dev.jaimeprieto.procesamientoasincrono.modelos.EjecucionTarea;
+import dev.jaimeprieto.procesamientoasincrono.modelos.EstadoEjecucion;
 import dev.jaimeprieto.procesamientoasincrono.modelos.EstadoTarea;
 import dev.jaimeprieto.procesamientoasincrono.modelos.Tarea;
+import dev.jaimeprieto.procesamientoasincrono.repositorios.RepositorioEjecucionTarea;
 import dev.jaimeprieto.procesamientoasincrono.repositorios.RepositorioTarea;
 import io.github.resilience4j.core.IntervalFunction;
 import io.github.resilience4j.retry.Retry;
@@ -50,15 +53,18 @@ public class TareaConsumidor {
 
 	private final RepositorioTarea repositorioTarea;
 
+	private final RepositorioEjecucionTarea repositorioEjecucionTarea;
+
 	private final RegistroManejadores registroManejadores;
 
 	private final MeterRegistry meterRegistry;
 
 	public TareaConsumidor(RepositorioTarea repositorioTarea, RegistroManejadores registroManejadores,
-			MeterRegistry meterRegistry) {
+			MeterRegistry meterRegistry, RepositorioEjecucionTarea repositorioEjecucionTarea) {
 		this.repositorioTarea = repositorioTarea;
 		this.registroManejadores = registroManejadores;
 		this.meterRegistry = meterRegistry;
+		this.repositorioEjecucionTarea = repositorioEjecucionTarea;
 	}
 
 	// Consume mensajes de la cola de prioridad alta (prefetch alto)
@@ -85,6 +91,9 @@ public class TareaConsumidor {
 	// reintentable,
 	// marca la tarea FALLIDA y rechaza el mensaje sin reencolar (cae al DLQ); si
 	// todo va bien, la marca COMPLETADA
+	// Se engancha a los eventos de Resilience4j para registrar en ejecucion_tarea
+	// cada intento real (reintentable, exitoso o fallido definitivo) y actualizar
+	// métricas.
 	public void procesarTarea(String idTarea) {
 		try {
 			MDC.put(ID_TAREA, idTarea);
@@ -99,7 +108,14 @@ public class TareaConsumidor {
 					.intervalFunction(IntervalFunction.ofExponentialBackoff(2000, 2))
 					.retryExceptions(ExcepcionReintentable.class).build();
 			Retry retry = Retry.of("tarea-" + tarea.getId(), config);
-			retry.getEventPublisher().onRetry(evento -> meterRegistry.counter(TAREAS_REINTENTADAS).increment());
+			retry.getEventPublisher().onRetry(evento -> {
+				meterRegistry.counter(TAREAS_REINTENTADAS).increment();
+				registrarEjecucion(tarea, evento.getNumberOfRetryAttempts(), EstadoEjecucion.FALLIDO_REINTENTABLE,
+						evento.getLastThrowable().getMessage());
+			}).onSuccess(evento -> registrarEjecucion(tarea, evento.getNumberOfRetryAttempts() + 1,
+					EstadoEjecucion.EXITO, null))
+					.onError(evento -> registrarEjecucion(tarea, evento.getNumberOfRetryAttempts(),
+							EstadoEjecucion.FALLIDO_FINAL, evento.getLastThrowable().getMessage()));
 			Timer.Sample muestra = Timer.start(meterRegistry);
 			try {
 				retry.executeRunnable(() -> manejador.manejar(tarea));
@@ -145,5 +161,16 @@ public class TareaConsumidor {
 			meterRegistry.counter(TAREAS_COMPLETADAS).increment();
 		}
 		repositorioTarea.save(tarea);
+	}
+
+	private void registrarEjecucion(Tarea tarea, int numeroIntento, EstadoEjecucion estado, String mensajeError) {
+		EjecucionTarea ejecucion = new EjecucionTarea();
+		ejecucion.setTarea(tarea);
+		ejecucion.setNumeroIntento(numeroIntento);
+		ejecucion.setEstado(estado);
+		ejecucion.setMensajeError(mensajeError);
+		ejecucion.setFechaInicio(LocalDateTime.now());
+		ejecucion.setFechaFin(LocalDateTime.now());
+		repositorioEjecucionTarea.save(ejecucion);
 	}
 }
